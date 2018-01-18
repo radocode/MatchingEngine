@@ -21,14 +21,14 @@ public class MatchingEngine {
         //no inicializar
     }
 
-    @PersistenceContext(unitName = "cl.tuten.core_TutenREST_war_0.1-SNAPSHOTPU")
+    @PersistenceContext(unitName = "cl.core_REST_war_0.1-SNAPSHOTPU")
     private EntityManager em;
 
     @EJB
-    private TutenBookingFacadeLocal bookingFacade;
+    private BookingFacadeLocal bookingFacade;
 
     @EJB
-    private TutenParamsFacadeLocal paramsFacade;
+    private ParamsFacadeLocal paramsFacade;
 
     @Schedule(minute = "*", hour = "*")
     private void match() {
@@ -38,19 +38,19 @@ public class MatchingEngine {
         Logger.getLogger(MatchingEngine.class.getName()).log(Level.INFO, "Transforma los bookings rejected en nuevos. Comprobando...");
 
         //toma los rejected y los transforma a nuevos
-        List<TutenBooking> bookingsRejected = em.createQuery("SELECT o FROM TutenBooking o WHERE o.bookingState = :state")
+        List<Booking> bookingsRejected = em.createQuery("SELECT o FROM Booking o WHERE o.bookingState = :state")
                 .setParameter("state", Constants.BOOKING_STATE_REJECTED).getResultList();
 
-        for (TutenBooking rejected : bookingsRejected) {
+        for (Booking rejected : bookingsRejected) {
             //cambia estado a nuevo
             rejected.setBookingState(Constants.BOOKING_STATE_CREATED);
 
             //TODO: crear tabla de Booking Reject que tenga información de rechazos
             //TODO: agrega profesional a lista de rechazos
-            rejected.getTutenUserProfessional().getTutenUser1().setRejectedWorks(rejected.getTutenUserProfessional().getTutenUser1().getRejectedWorks() + "," + rejected.getBookingId());
+            rejected.getUserProfessional().getUser1().setRejectedWorks(rejected.getUserProfessional().getUser1().getRejectedWorks() + "," + rejected.getBookingId());
 
             //quita profesional
-            rejected.setTutenUserProfessional(null);
+            rejected.setUserProfessional(null);
             //graba booking
             bookingFacade.edit(rejected);
         }
@@ -60,24 +60,24 @@ public class MatchingEngine {
 
         //---------------------------------------------
         //busca nuevos para ser asignados
-        List<TutenBooking> bookings = em.createQuery("SELECT o FROM TutenBooking o WHERE o.bookingState = :state")
+        List<Booking> bookings = em.createQuery("SELECT o FROM Booking o WHERE o.bookingState = :state")
                 .setParameter("state", Constants.BOOKING_STATE_CREATED).getResultList();
-        for (TutenBooking booking : bookings) {
+        for (Booking booking : bookings) {
 
             Logger.getLogger(MatchingEngine.class.getName()).log(Level.INFO, "Se comprueba de que hayan bookings disponibles. Comprobando booking id: {0}", new Object[]{booking.getBookingId()});
 
             //traer pros con tipo de booking, ordenados por score
             //TODO: de la ciudad
-            List<TutenProfessional> pros = em.createQuery("SELECT o FROM TutenProfessional o WHERE o.professionalType = :bookingType AND o.active = TRUE ORDER BY o.score DESC")
-                    .setParameter("bookingType", booking.getTutenUserProfessionalRole()).getResultList();
-            for (TutenProfessional pro : pros) {
-                Logger.getLogger(MatchingEngine.class.getName()).log(Level.INFO, "Se comprueba de que hayan profesionales disponibles. Comprobando profesional: {0} activo: {1} rol: {2}", new Object[]{pro.getTutenUser(), pro.getActive(), pro.getProfessionalType().getUserRole()});
+            List<Professional> pros = em.createQuery("SELECT o FROM Professional o WHERE o.professionalType = :bookingType AND o.active = TRUE ORDER BY o.score DESC")
+                    .setParameter("bookingType", booking.getUserProfessionalRole()).getResultList();
+            for (Professional pro : pros) {
+                Logger.getLogger(MatchingEngine.class.getName()).log(Level.INFO, "Se comprueba de que hayan profesionales disponibles. Comprobando profesional: {0} activo: {1} rol: {2}", new Object[]{pro.getUser(), pro.getActive(), pro.getProfessionalType().getUserRole()});
 
                 //traer profesionales con availability en sus schedules
                 //parsear json para saber duración, con fecha inicio y fecha fin calculada hacer un between
                 //del json hay que obtener lo siguiente: selectedRooms y selectedBathrooms. la suma de ellos
                 //se multiplica por la unidad minima (30 minutos, o 0.5 horas) y luego se guarda para el conteo
-                BookingData data = TutenUtils.storedBookingDataFromJson(booking.getBookingFields());
+                BookingData data = Utils.storedBookingDataFromJson(booking.getBookingFields());
 
                 //se asume el tiempo en minutos
                 int selectedRoomsTime = 0;
@@ -105,12 +105,12 @@ public class MatchingEngine {
                 //en la query de abajo, la duración del json debería ser igual a la contada en la query
                 Date bookingEndTime = new Date(booking.getBookingTime().getTime());
                 bookingEndTime.setMinutes(bookingEndTime.getMinutes() + ((selectedRoomsTime + selectedBathroomsTime + selectedExtras) * 30));
-                long countAvailability = (Long) em.createQuery("SELECT count(o) FROM TutenWorkAvailability o WHERE o.tutenProfessional = :pro AND o.availabilityHour BETWEEN :startTime AND :endTime ")
+                long countAvailability = (Long) em.createQuery("SELECT count(o) FROM WorkAvailability o WHERE o.Professional = :pro AND o.availabilityHour BETWEEN :startTime AND :endTime ")
                         .setParameter("pro", pro).setParameter("startTime", booking.getBookingTime()).setParameter("endTime", bookingEndTime).getSingleResult();
 
                 //ya que ambos estan medidos en unidades de 30, pues solo se debe sumar las unidades y comparar
                 if (selectedRoomsTime + selectedBathroomsTime + selectedExtras == countAvailability) {
-                    Logger.getLogger(MatchingEngine.class.getName()).log(Level.INFO, "Booking supera al tiempo disponible de este professional. Email: {0}", pro.getTutenUser());
+                    Logger.getLogger(MatchingEngine.class.getName()).log(Level.INFO, "Booking supera al tiempo disponible de este professional. Email: {0}", pro.getUser());
 
                     continue;
                 }
@@ -122,29 +122,29 @@ public class MatchingEngine {
                 bookingEndTime.setMinutes(bookingEndTime.getMinutes() + ((selectedRoomsTime + selectedBathroomsTime + selectedExtras) * 30) + timeBetweenBookings);
                 Date bookingStartTimeSchedule = new Date(booking.getBookingTime().getTime());
                 bookingStartTimeSchedule.setMinutes(bookingStartTimeSchedule.getMinutes() - timeBetweenBookings);
-                long countSchedule = (Long) em.createQuery("SELECT count(o) FROM TutenWorkSchedule o WHERE o.tutenProfessional = :pro AND o.scheduleTimestamp BETWEEN :dateStartHour AND :dateEndHour")
+                long countSchedule = (Long) em.createQuery("SELECT count(o) FROM WorkSchedule o WHERE o.Professional = :pro AND o.scheduleTimestamp BETWEEN :dateStartHour AND :dateEndHour")
                         .setParameter("pro", pro).setParameter("dateStartHour", bookingStartTimeSchedule).setParameter("dateEndHour", bookingEndTimeSchedule).getSingleResult();
 
                 if (countSchedule != 0) {
-                    Logger.getLogger(MatchingEngine.class.getName()).log(Level.INFO, "Professional copado de trabajo , no disponible. Email: {0}", pro.getTutenUser());
+                    Logger.getLogger(MatchingEngine.class.getName()).log(Level.INFO, "Professional copado de trabajo , no disponible. Email: {0}", pro.getUser());
 
                     continue;
                 }
 
                 //filtrar profesionales que rechazaron anteriormente la tarea
                 //hacer split en campo de rechazos y ver si acaso el booking id está ahí, si está entonces ignorar profesional
-                if (pro.getTutenUser1().getRejectedWorks() != null && Arrays.asList(pro.getTutenUser1().getRejectedWorks().split(",")).contains(booking.getBookingId() + "")) {
-                    Logger.getLogger(MatchingEngine.class.getName()).log(Level.INFO, "Booking rechazado, no elegible. Email: {0} Booking id: {1}", new Object[]{pro.getTutenUser(), booking.getBookingId()});
+                if (pro.getUser1().getRejectedWorks() != null && Arrays.asList(pro.getUser1().getRejectedWorks().split(",")).contains(booking.getBookingId() + "")) {
+                    Logger.getLogger(MatchingEngine.class.getName()).log(Level.INFO, "Booking rechazado, no elegible. Email: {0} Booking id: {1}", new Object[]{pro.getUser(), booking.getBookingId()});
 
                     continue;
                 }
                 //asignar al primero de los restantes, realizar push y pasar al siguiente booking
-                booking.setTutenUserProfessional(pro);
-                pushBookingState(paramsFacade.find(ParamKeys.PUSH_TITLE).getParamValue(), booking.getTutenUserProfessional().getTutenUser1(), booking);
+                booking.setUserProfessional(pro);
+                pushBookingState(paramsFacade.find(ParamKeys.PUSH_TITLE).getParamValue(), booking.getUserProfessional().getUser1(), booking);
                 break;
             }
 
-            if (booking.getTutenUserProfessional() == null) {
+            if (booking.getUserProfessional() == null) {
                 //TODO: si no hay profesionales enviar correo al COO y poner en estado especial el booking
                 //cambiar a un estado especial para que no salga siempre
                 booking.setBookingState(Constants.BOOKING_STATE_UNASSIGNED);
@@ -162,9 +162,9 @@ public class MatchingEngine {
 
         //---------------------------------------------
         //revisa propuestos para cancelarlos si no respondieron
-        List<TutenBooking> bookingsProposed = em.createQuery("SELECT o FROM TutenBooking o WHERE o.bookingState = :state")
+        List<Booking> bookingsProposed = em.createQuery("SELECT o FROM Booking o WHERE o.bookingState = :state")
                 .setParameter("state", Constants.BOOKING_STATE_PROPOSED).getResultList();
-        for (TutenBooking proposed : bookingsProposed) {
+        for (Booking proposed : bookingsProposed) {
 
             Logger.getLogger(MatchingEngine.class.getName()).log(Level.INFO, "Buscando bookings para ser propuestos. Comprobando booking id: {0}", proposed.getBookingId());
 
@@ -181,7 +181,7 @@ public class MatchingEngine {
                     //TODO: hay que agregarlos a la lista de rejecteds o en su defecto,a una tabla de rejecteds
 
                     //enviar push indicando eso al front
-                    pushBookingState(paramsFacade.find(ParamKeys.PUSH_TITLE_CANCELED).getParamValue(), proposed.getTutenUserProfessional().getTutenUser1(), proposed);
+                    pushBookingState(paramsFacade.find(ParamKeys.PUSH_TITLE_CANCELED).getParamValue(), proposed.getUserProfessional().getUser1(), proposed);
                     //graba booking
                     bookingFacade.edit(proposed);
 
@@ -199,10 +199,10 @@ public class MatchingEngine {
         Logger.getLogger(MatchingEngine.class.getName()).log(Level.INFO, "Revisando match {0} se ha demorado: {1} milisegundos.", new Object[]{LocalDateTime.now(), diffInMilli});
     }
 
-    private void pushBookingState(String statusMsg, TutenUser user, TutenBooking booking) {
-        String urlParametersCanceled = TutenUtils.createIonicJson(user.getTokensIonic(), statusMsg, booking.getBookingId(), booking.getBookingState());
+    private void pushBookingState(String statusMsg, User user, Booking booking) {
+        String urlParametersCanceled = Utils.createIonicJson(user.getTokensIonic(), statusMsg, booking.getBookingId(), booking.getBookingState());
         Logger.getLogger(MatchingEngine.class.getName()).log(Level.INFO, "Se prepara post a Ionic Push con los parametros: urlParametersCanceled: {0} ionic app id: {1} y tokenClienteIonic: {2}", new Object[]{urlParametersCanceled, paramsFacade.find(ParamKeys.IONIC_APP_ID).getParamValue(), user.getTokensIonic()});
-        String postResultCanceled = TutenUtils.executeIonicPost(paramsFacade.find(ParamKeys.IONIC_SERVICE_URL).getParamValue(), urlParametersCanceled, paramsFacade.find(ParamKeys.IONIC_APP_ID).getParamValue(), paramsFacade.find(ParamKeys.IONIC_SECRET_KEY).getParamValue());
+        String postResultCanceled = Utils.executeIonicPost(paramsFacade.find(ParamKeys.IONIC_SERVICE_URL).getParamValue(), urlParametersCanceled, paramsFacade.find(ParamKeys.IONIC_APP_ID).getParamValue(), paramsFacade.find(ParamKeys.IONIC_SECRET_KEY).getParamValue());
         Logger.getLogger(MatchingEngine.class.getName()).log(Level.INFO, "Se manda post a Ionic Push, booking id: {0}, result: {1}", new Object[]{booking.getBookingId(), postResultCanceled});
     }
 }
