@@ -1,15 +1,5 @@
-package cl.tuten.core.match;
+package cl;
 
-import cl.tuten.core.bo.TutenBooking;
-import cl.tuten.core.bo.TutenProfessional;
-import cl.tuten.core.bo.TutenUser;
-import cl.tuten.core.mo.booking.BookingData;
-import cl.tuten.core.mo.booking.Extra;
-import cl.tuten.core.session.TutenBookingFacadeLocal;
-import cl.tuten.core.session.TutenParamsFacadeLocal;
-import cl.tuten.core.utils.Constants;
-import cl.tuten.core.utils.ParamKeys;
-import cl.tuten.core.utils.TutenUtils;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.Date;
